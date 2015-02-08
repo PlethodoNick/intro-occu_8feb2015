@@ -1,11 +1,113 @@
-# History files
-.Rhistory
+set.seed(32084)
 
-# Example code in package build process
-*-Ex.R
+## Create survey data 
+sites <- 50
+surveys <- 5
+y <- array(dim=c(sites,surveys)) 
 
-# R data files from past sessions
-.Rdata
 
-# RStudio files
-.Rproj.user/
+## Relationship b/w expected occurrence prob and covariate (inverse logit)
+a.psi <- 1
+b.psi1 <- 4
+covar.psi <- sort(runif(n=sites, min=-1, max=1))
+
+psi <- plogis(a.psi + b.psi1*covar.psi) 
+
+
+## Add Bernoulli noise - draw occurrence indicator z from occupancy prob (psi)
+z <- rbinom(n=sites, size=1, prob=psi)
+total.occu <- sum(z) # total sites occupied 64/100
+
+
+## Relationship detection prob and covariate
+a.p <- 0
+b.p <- -1.5
+covar.p <- sort(runif(n=sites, min=-1, max=1))
+
+p <- plogis(a.p + b.p*covar.p)
+
+
+## Fill in survey array (Bernoulli) with detection prob
+### no difference in det prob among surveys)
+
+prob.det <- z*p ## Unoccupied sites = 0 detection
+for(i in 1:surveys){
+  y[,i] <- rbinom(n=sites, size=1, prob=prob.det)
+}
+
+
+## naive occu based on presence/absence only
+naive.occu <- apply(y, 1, max) 
+
+## Predict naive occu based on covariate
+naive.pred <- plogis(predict(glm(naive.occu~covar.psi+I(covar.psi^2),
+                                 family=binomial)))
+
+
+## PLot Detection and det covariate and occu expectations and occu covariate
+par(mfrow=c(1,2))
+plot(p~covar.p, ylim=c(0,1), xlab="Detection Covariate",
+     ylab="Detection Propbability (p)", type="l", xlim=c(-1,1),
+     lwd=2, col="black", las=1, frame.plot=FALSE)
+
+plot(psi~covar.psi, xlab="Occupancy Covariate", 
+     ylab=expression(paste("Occupancy Probability ( ",psi,")")), 
+     las=1, type="l", col="steelblue1", lwd=2,
+     frame.plot=FALSE, ylim=c(0,1), xlim=c(-1,1))
+lines(naive.pred~covar.psi, lwd=2, lty=2, col="firebrick1")
+legend('topleft', legend=c('Expected','Naive prediction'),
+       bty='n', lty=c(1,2), lwd=c(2,2), col=c('steelblue1','firebrick1'))
+
+
+## Analyze data using unmarked package
+library(unmarked)
+
+
+## Set up UnmarkedFrame dataset
+obs.cov <- list(covar.p = matrix(covar.p, nrow=sites, ncol=surveys, 
+                        byrow=FALSE))
+
+data.umf <- unmarkedFrameOccu(y=y, siteCovs=data.frame(covar.psi=covar.psi),
+                              obsCovs=obs.cov)
+
+data.umf
+
+
+## Fit model for constant occu/det 
+constant.model <- occu(~1 ~1, data.umf)
+
+## Fit model for detection with covar.p
+detection.model <- occu(~covar.p ~1, data.umf)
+
+## Fit model for occupancy with covar.psi
+occupancy.model <- occu(~1 ~covar.psi, data.umf)
+
+## Fit model for occupancy and detection with covariates
+full.model <- occu(~covar.p ~covar.psi, data.umf)
+
+
+## Compare model fit 
+library(AICcmodavg)
+
+aictab(cand.set=c(constant.model, detection.model, occupancy.model, full.model),
+       modnames=c('constant','detection','occupancy','det and occu'))
+
+
+## Predicted number of sites (known; occupancy; naive)
+re <- ranef(full.model)
+total.occu; sum(bup(re, stat="mode")) ; sum(naive.pred)
+
+
+## Plot occupancy prediction with naive prediction and expected
+Epsi1 <- predict(full.model, type="state", newdata=data.frame(covar.psi))
+with(Epsi1, {
+  plot(covar.psi, Predicted, xlim=c(-1,1), ylim=c(0, 1),
+       xlab="Occupancy Covariate", type='l', lty=1, lwd=2,
+       ylab=expression(paste("Probability of occurrence ( ",psi,")")), las=1)
+})
+lines(psi~covar.psi, lwd=2, col='steelblue1')
+lines(naive.pred~covar.psi, lwd=2, lty=2, col="firebrick1")
+legend('topleft', 
+       legend=c('Occupancy Prediction','Naive prediction', 'Expected'),
+       bty='n', lty=c(1,2,1), lwd=c(2,2,2), 
+       col=c('black','firebrick1','steelblue1'))
